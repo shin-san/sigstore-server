@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
   generateName: image-sign-and-push-pipeline-
-  namespace: logging-test
   labels:
     pipeline: image-sign-and-push-pipeline
     tekton.dev/pipeline: image-sign-and-push-pipeline
@@ -32,7 +31,7 @@ spec:
   workspaces:
     - name: shared-data
       persistentVolumeClaim:
-        claimName: sigstore-test-pipeline-storage
+        claimName: sigstore-pipeline-storage
     - name: dockerconfig
       secret:
         secretName: quay-pull-secret
