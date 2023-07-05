@@ -1,0 +1,28 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: cleanup
+spec:
+  description: >-
+    Performs a cleanup on the PVC
+
+  params:
+    - default: >-
+        registry.access.redhat.com/ubi8-minimal:latest
+      description: The location of the base image
+      name: IMAGE
+      type: string
+
+  workspaces:
+    - name: source
+    
+  steps:
+    - image: $(params.IMAGE)
+      name: cleanup
+      resources: {}
+      script: |-
+        #!/bin/bash 
+        echo Removing contents of: $(workspaces.source.path)
+        rm -rf $(workspaces.source.path)/* -v
+
+      workingDir: $(workspaces.source.path)

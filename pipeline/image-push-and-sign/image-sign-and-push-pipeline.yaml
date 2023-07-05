@@ -1,0 +1,70 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: image-sign-and-push-pipeline
+spec:
+  params:
+    - name: IMAGE
+      type: string
+    - name: VERSION
+      type: string
+    - name: CONFIG_CONTEXT_PATH
+      type: string
+    - name: TLSVERIFY
+      type: string
+    - name: PUSH_EXTRA_ARGS
+      type: string
+    - name: ORG_NAME
+      type: string
+    - name: SIGSTORE_URL
+      type: string
+  tasks:
+    - name: image-sign-and-push
+      params:
+        - name: IMAGE
+          value: $(params.IMAGE)
+        - name: VERSION
+          value: $(params.VERSION)
+        - name: TLSVERIFY
+          value: $(params.TLSVERIFY)
+        - name: PUSH_EXTRA_ARGS
+          value: $(params.PUSH_EXTRA_ARGS)
+        - name: CONFIG_CONTEXT_PATH
+          value: $(params.CONFIG_CONTEXT_PATH)
+      taskRef:
+        kind: Task
+        name: image-sign-and-push
+      workspaces:
+        - name: source
+          workspace: shared-data
+        - name: dockerconfig
+          workspace: dockerconfig
+
+    - name: upload-signature
+      params:
+        - name: CONFIG_CONTEXT_PATH
+          value: $(params.CONFIG_CONTEXT_PATH)
+        - name: ORG_NAME
+          value: $(params.ORG_NAME)
+        - name: SIGSTORE_URL
+          value: $(params.SIGSTORE_URL)
+      taskRef:
+        kind: Task
+        name: upload-signature
+      workspaces:
+        - name: source
+          workspace: shared-data
+      runAfter:
+        - sign-image
+
+  finally:
+    - name: cleanup
+      taskRef:
+        name: cleanup
+      workspaces:
+        - name: source
+          workspace: shared-data  
+
+  workspaces:
+    - name: shared-data
+    - name: dockerconfig

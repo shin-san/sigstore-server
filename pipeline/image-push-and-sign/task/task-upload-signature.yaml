@@ -1,0 +1,99 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: upload-signature
+  labels:
+    app.kubernetes.io/version: '0.1'
+spec:
+  description: >-
+    The task used for uploading GPG signature to a remote signature store server
+  params:
+
+    - description: Base image used for the task
+      name: IMAGE
+      type: string
+      default: registry.redhat.io/openshift4/ose-cli
+
+    - description: Version used for the image
+      name: IMAGE_VERSION
+      type: string
+      default: 'v4.11'
+
+    - description: URL of the signature store server
+      name: SIGSTORE_CONTEXT_PATH
+      type: string
+
+    - description: Organisation name where the signature is located
+      name: ORG_NAME
+      type: string
+
+    - description: URL of the signature store server
+      name: SIGSTORE_URL
+      type: string
+  steps:
+    - image: $(params.IMAGE):$(params.IMAGE_VERSION)
+      name: upload-signature
+      resources: {}
+      env:
+        - name: SIGSTORE_USER
+          valueFrom:
+            secretKeyRef:
+                name: sigstore-credentials
+                key: username
+        - name: SIGSTORE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+                name: sigstore-credentials
+                key: password
+      script: |
+        #!/bin/bash
+
+        set -e
+
+        if [[ ! -e $(workspaces.source.path)/$(params.SIGSTORE_CONTEXT_PATH) ]]; then
+
+          echo "/$(params.SIGSTORE_CONTEXT_PATH) is missing..."
+          exit 1
+
+        else
+
+          cd $(workspaces.source.path)/$(params.SIGSTORE_CONTEXT_PATH)/$(params.ORG_NAME)
+          echo "Uploading signature to sigstore..."
+          
+          # loop through ./$(params.ORG_NAME) directory
+          for dir in *
+
+          do
+            echo "creating $dir directory..."
+            CREATE_DIRECTORY_CODE=$(curl -s -o /dev/null -k -u $SIGSTORE_USER:$SIGSTORE_PASSWORD -w %{http_code} -XMKCOL $(params.SIGSTORE_URL)/$(params.ORG_NAME)/$dir)
+            if [[ $CREATE_DIRECTORY_CODE == 201 || $CREATE_DIRECTORY_CODE == 301 ]]; then
+
+              echo "$dir created, uploading signature to the directory..."
+
+              cd $dir
+              for signature in *
+              do 
+
+                UPLOAD_SIGNATURE_CODE=$(curl -s -o /dev/null -k -u $SIGSTORE_USER:$SIGSTORE_PASSWORD -w %{http_code} -T $signature $(params.SIGSTORE_URL)/$(params.ORG_NAME)/$dir/)
+                if [[ $UPLOAD_SIGNATURE_CODE == 201 ]]; then
+                  echo "$signature uploaded!"
+                else
+                  echo "Unable to upload $signature in $dir directory"
+                  exit 1
+                fi
+
+              done
+            else
+              echo "Unable to create $dir directory in the remote sigstore..."
+              exit 1
+            fi
+          done
+
+          if [[ ! $? -eq 0 ]]; then
+            exit 1
+          fi
+
+        fi
+      workingDir: $(workspaces.source.path)
+  workspaces:
+    - name: source

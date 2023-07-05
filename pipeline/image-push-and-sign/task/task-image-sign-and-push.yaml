@@ -1,0 +1,187 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: image-sign-and-push
+  labels:
+    app.kubernetes.io/version: '0.1'
+spec:
+  description: >-
+    Task that pulls, sign and pushes using both buildah and podman containers
+  params:
+    - description: Reference of the image buildah will produce.
+      name: IMAGE
+      type: string
+    - description: Version of the image
+      name: VERSION
+      type: string
+    - default: >-
+        registry.redhat.io/rhel8/buildah@sha256:ac0b8714cc260c94435cab46fe41b3de0ccbc3d93e38c395fa9d52ac49e521fe
+      description: The location of the buildah builder image.
+      name: BUILDER_IMAGE
+    - default: >-
+        registry.redhat.io/ubi8/podman:8.7-9
+      description: The location of the podman image.
+      name: PODMAN_IMAGE
+      type: string
+    - default: vfs
+      description: Set buildah storage driver
+      name: STORAGE_DRIVER
+      type: string
+    - default: 'true'
+      description: >-
+        Verify the TLS on the registry endpoint (for push/pull to a non-TLS
+        registry)
+      name: TLSVERIFY
+      type: string
+    - default: oci
+      description: 'The format of the built container, oci or docker'
+      name: FORMAT
+      type: string
+    - default: ''
+      description: Extra parameters passed for the push command when pushing images.
+      name: PUSH_EXTRA_ARGS
+      type: string
+    - name: ORG_NAME
+      type: string
+      description: Organisation name of the image URL
+    - name: SIGSTORE_CONTEXT_PATH
+      type: string
+      description: Context path of where detached signatures are copied to
+  results:
+    - description: Digest of the image just built.
+      name: IMAGE_DIGEST
+  steps:
+    - image: $(params.BUILDER_IMAGE)
+      name: pull-image
+      resources: {}
+      script: |
+        #!/bin/bash
+
+        set -ex
+
+        if [[ "$(workspaces.dockerconfig.bound)" == "true" ]]; then
+
+          # if config.json exists at workspace root, we use that
+          if test -f "$(workspaces.dockerconfig.path)/config.json"; then
+            export DOCKER_CONFIG="$(workspaces.dockerconfig.path)"
+
+          # else we look for .dockerconfigjson at the root
+          elif test -f "$(workspaces.dockerconfig.path)/.dockerconfigjson"; then
+            cp "$(workspaces.dockerconfig.path)/.dockerconfigjson" "$HOME/.docker/config.json"
+            export DOCKER_CONFIG="$HOME/.docker"
+
+          # need to error out if neither files are present
+          else
+            echo "neither 'config.json' nor '.dockerconfigjson' found at workspace root"
+            exit 1
+          fi
+        fi
+
+        echo "pulling image..."
+
+        buildah --storage-driver=$(params.STORAGE_DRIVER) \
+          --tls-verify=$(params.TLSVERIFY) pull $(params.IMAGE):$(params.VERSION)
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+      volumeMounts:
+        - mountPath: /var/lib/containers
+          name: varlibcontainers
+      workingDir: $(workspaces.source.path)
+
+    - image: $(params.PODMAN_IMAGE)
+      name: sign-and-push
+      resources: {}
+      env:
+        - name: GNUPGHOME
+          value: /root/.gnupg
+      script: |
+        #!/bin/bash
+
+        set -ex
+
+        if [[ "$(workspaces.dockerconfig.bound)" == "true" ]]; then
+
+          # if config.json exists at workspace root, we use that
+          if test -f "$(workspaces.dockerconfig.path)/config.json"; then
+            export DOCKER_CONFIG="$(workspaces.dockerconfig.path)"
+
+          # else we look for .dockerconfigjson at the root
+          elif test -f "$(workspaces.dockerconfig.path)/.dockerconfigjson"; then
+            cp "$(workspaces.dockerconfig.path)/.dockerconfigjson" "$HOME/.docker/config.json"
+            export DOCKER_CONFIG="$HOME/.docker"
+
+          # need to error out if neither files are present
+          else
+            echo "neither 'config.json' nor '.dockerconfigjson' found at workspace root"
+            exit 1
+          fi
+        fi
+
+        echo "intiating the creation of gpg keys..."
+
+        # initiate creation of pubring.kbx
+        gpg --list-keys
+
+        # import gpg public key
+        gpg --import $(workspaces.source.path)/gnupg/jchan-pubkey.gpg
+
+        # import gpg private key
+        echo $(workspaces.source.path)/secrets/password | gpg --batch --yes --passphrase-fd 0 \
+          --import $(workspaces.source.path)/gnupg/jchan-privkey.gpg
+
+        # check whether the gpg key pair have been added correctly
+        gpg --list-keys
+
+        echo "pushing image..."
+
+        podman --storage-driver=$(params.STORAGE_DRIVER) push \
+          --tls-verify=$(params.TLSVERIFY) \
+          --digestfile /tmp/image-digest $(params.PUSH_EXTRA_ARGS) \
+          --sign-passphrase-file $(workspaces.source.path)/secrets/password \
+           $(params.IMAGE):$(params.VERSION) docker://$(params.IMAGE):$(params.VERSION)
+          
+        ls -la /var/lib/containers/sigstore/$(params.ORG_NAME)
+
+        if [[ ! -e $(workspaces.source.path)/$(params.SIGSTORE_CONTEXT_PATH) ]]; then
+          echo "$(params.SIGSTORE_CONTEXT_PATH) does not exist. Create directory..."
+          mkdir -p $(params.SIGSTORE_CONTEXT_PATH)
+        else 
+          echo "$(params.SIGSTORE_CONTEXT_PATH) already exists. Skipping create directory"
+        fi
+
+        # copy signature blob in /var/lib/containers to signature-server
+        cp -r /var/lib/containers/sigstore/* $(workspaces.source.path)/$(params.SIGSTORE_CONTEXT_PATH)
+
+        ls -la $(workspaces.source.path)/$(params.SIGSTORE_CONTEXT_PATH)
+
+        cat /tmp/image-digest | tee $(results.IMAGE_DIGEST.path)
+
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+      volumeMounts:
+        - mountPath: /var/lib/containers
+          name: varlibcontainers
+        - mountPath: $(workspaces.source.path)/gnupg
+          name: gpg-import-keys
+        - mountPath: $(workspaces.source.path)/secrets
+          name: gpg-password
+      workingDir: $(workspaces.source.path)
+  volumes:
+    - emptyDir: {}
+      name: varlibcontainers
+    - name: gpg-import-keys
+      secret:
+        secretName: softel-gpg-import-keys
+        defaultMode: 420
+    - name: gpg-password
+      secret:
+        secretName: softel-gpg-password
+        defaultMode: 420
+  workspaces:
+    - name: source
+    - name: dockerconfig
+      optional: true

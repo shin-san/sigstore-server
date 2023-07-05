@@ -1,0 +1,38 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: image-sign-and-push-pipeline-
+  namespace: logging-test
+  labels:
+    pipeline: image-sign-and-push-pipeline
+    tekton.dev/pipeline: image-sign-and-push-pipeline
+spec:
+  params:
+    - name: IMAGE
+      value: quay.io/naythanc/yet-another-hello-world
+    - name: VERSION
+      value: latest
+    - name: SIGSTORE_CONTEXT_PATH
+      value: ./sigstore
+    - name: TLSVERIFY
+      value: false
+    - name: PUSH_EXTRA_ARGS
+      value: >-
+        --remove-signatures --sign-by jchan@integral.com.au
+    - name: ORG_NAME
+      value: naythanc
+    - name: SIGSTORE_URL
+      value: https://sigstore.naythanc.dev/images
+  pipelineRef:
+    name: image-sign-and-push-pipeline
+  serviceAccountName: pipeline
+  podTemplate:
+    securityContext:
+      runAsUser: 0
+  workspaces:
+    - name: shared-data
+      persistentVolumeClaim:
+        claimName: sigstore-test-pipeline-storage
+    - name: dockerconfig
+      secret:
+        secretName: quay-pull-secret
