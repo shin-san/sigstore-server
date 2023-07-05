@@ -25,6 +25,17 @@ The container image being used as a sigstore server is a Red Hat version of http
     │   └── sigstore-error.log
     ├── modules
     │   └── 00-dav.conf
+    ├── pipeline
+    │   └── image-push-and-sign
+    │       ├── image-sign-and-push-pipeline.yaml
+    │       ├── kustomization.yaml
+    │       ├── pipelinerun-image-sign-and-push-v3.yaml
+    │       ├── pvc
+    │       │   └── pvc-sigstore-pipeline-storage copy.yaml
+    │       └── task
+    │           ├── task-cleanup.yaml
+    │           ├── task-image-sign-and-push.yaml
+    │           └── task-upload-signature.yaml
     ├── podman-run.sh
     └── README.md
 ```
@@ -34,6 +45,7 @@ The container image being used as a sigstore server is a Red Hat version of http
 * `/images` is the directory that contains all the detached signature for validation
 * `logs` contains all the logs of both httpd access and audit logs
 * `/modules` is used specifically to enable certain plugins
+* `/pipeline` contains a working tekton pipeline resources that will pull, sign, and upload the detached signature to the remote sigstore server
 * `podman-run.sh` is a script on how to run the container including the relevant volume mounts to guarantee that the sigstore is operational
 
 Sigstore uses a specific plugin called WebDAV to allow file and directory creation through HTTP protocol
