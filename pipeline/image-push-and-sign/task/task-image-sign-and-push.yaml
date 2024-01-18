@@ -175,11 +175,11 @@ spec:
       name: varlibcontainers
     - name: gpg-import-keys
       secret:
-        secretName: softel-gpg-import-keys
+        secretName: jchan-gpg-import-keys
         defaultMode: 420
     - name: gpg-password
       secret:
-        secretName: softel-gpg-password
+        secretName: jchan-gpg-password
         defaultMode: 420
   workspaces:
     - name: source
